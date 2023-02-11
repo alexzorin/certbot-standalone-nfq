@@ -6,7 +6,7 @@ authors = ["Alex Zorin <alex@zorin.au>"]
 packages = [{include = "certbot_standalone_nfq"}]
 
 [tool.poetry.dependencies]
-python = ">=3.7"
+python = ">=3.6"
 fnfqueue = "^1.1.1"
 scapy = "^2.5.0"
 "certbot" = ">=1.12.0"
