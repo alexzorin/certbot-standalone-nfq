@@ -3,7 +3,6 @@ name = "certbot-standalone-nfq"
 version = "0.1.0"
 description = "A more convenient standalone HTTP authenticator based on Linux NFQUEUE"
 authors = ["Alex Zorin <alex@zorin.au>"]
-readme = "README.md"
 packages = [{include = "certbot_standalone_nfq"}]
 
 [tool.poetry.dependencies]
