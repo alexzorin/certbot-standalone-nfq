@@ -11,6 +11,7 @@ from certbot.plugins.common import Plugin
 from scapy.config import conf as scapy_conf
 from scapy.layers.http import HTTP, HTTPRequest, HTTPResponse
 from scapy.layers.inet import IP, TCP
+from scapy.packet import bind_bottom_up, bind_layers
 from scapy.sendrecv import send
 from scapy.supersocket import L3RawSocket
 
@@ -94,6 +95,10 @@ Other requests are unaffected.
 
     def prepare(self) -> None:
         scapy_conf.L3socket = L3RawSocket
+        if self.http_port != 80:
+            bind_bottom_up(TCP, HTTP, sport=self.http_port)
+            bind_bottom_up(TCP, HTTP, dport=self.http_port)
+            bind_layers(TCP, HTTP, sport=self.http_port, dport=self.http_port)
 
     def more_info(self) -> str:
         return ""
