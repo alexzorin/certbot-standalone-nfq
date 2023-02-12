@@ -71,8 +71,8 @@ Other requests are unaffected.
                 pkt_ip[HTTPRequest].Path.startswith(ACME_REQ_PATH)):
             return False
 
-        key_authz = pkt_ip[HTTPRequest].Path.lstrip(
-            ACME_REQ_PATH) + b"." + self.account_thumbprint
+        key_authz = pkt_ip[HTTPRequest].Path[len(
+            ACME_REQ_PATH):] + b"." + self.account_thumbprint
 
         pkt = IP(dst=pkt_ip.src, chksum=None)
         pkt /= TCP(
