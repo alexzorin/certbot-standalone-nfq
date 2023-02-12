@@ -8,9 +8,11 @@ import fnfqueue
 from acme import challenges
 from certbot import achallenges, configuration, interfaces
 from certbot.plugins.common import Plugin
+from scapy.config import conf as scapy_conf
 from scapy.layers.http import HTTP, HTTPRequest, HTTPResponse
 from scapy.layers.inet import IP, TCP
 from scapy.sendrecv import send
+from scapy.supersocket import L3RawSocket
 
 ACME_REQ_PATH = b"/.well-known/acme-challenge/"
 NFQUEUE_ID = 8555
@@ -91,7 +93,7 @@ Other requests are unaffected.
         pass
 
     def prepare(self) -> None:
-        pass
+        scapy_conf.L3socket = L3RawSocket
 
     def more_info(self) -> str:
         return ""
