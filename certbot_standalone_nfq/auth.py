@@ -2,7 +2,7 @@
 
 import subprocess
 import threading
-from typing import Callable, Iterable, List, Optional, Type
+from typing import Callable, Iterable, List, NamedTuple, Optional, Set, Type
 
 import fnfqueue
 from acme import challenges
@@ -19,6 +19,13 @@ ACME_REQ_PATH = b"/.well-known/acme-challenge/"
 NFQUEUE_ID = 8555
 
 
+class TCPConnection(NamedTuple):
+    saddr: str
+    daddr: str
+    sport: int
+    dport: int
+
+
 class Authenticator(interfaces.Authenticator, Plugin):
 
     description = """Works like the --standalone plugin, but still works if you already \
@@ -32,11 +39,13 @@ Other requests are unaffected.
     thread: threading.Thread
     account_thumbprint: bytes
     http_port: int
+    hijacked_conns: Set[TCPConnection]
 
     def __init__(self, config: Optional[configuration.NamespaceConfig], name: str) -> None:
         if not config:
             raise RuntimeError("Certbot configuration must be present")
         self.http_port = config.http01_port
+        self.hijacked_conns = set()
         super().__init__(config, name)
 
     def perform(self, achalls: Iterable[achallenges.AnnotatedChallenge]
@@ -58,12 +67,30 @@ Other requests are unaffected.
 
     def drain_queue(self):
         for pkt_in in self.conn:
-            if self.handle_packet(IP(pkt_in.payload)):
+            result = self.handle_packet(pkt_in)
+            if result is None:
+                continue
+            elif result:
                 pkt_in.drop()
             else:
                 pkt_in.accept()
 
-    def handle_packet(self, pkt_ip: IP) -> bool:
+    def handle_packet(self, pkt_in: fnfqueue.Packet) -> Optional[bool]:
+        """
+        Return values:
+        - True: The packet has been handled, drop it
+        - False: The packet is not handled, pass it through
+        - None: The packet has been modified, pass it through
+        """
+        pkt_ip: IP = IP(pkt_in.payload)
+        if not pkt_ip.haslayer(TCP):
+            return False
+
+        conn = TCPConnection(pkt_ip.src, pkt_ip.dst,
+                             pkt_ip[TCP].sport, pkt_ip[TCP].dport)
+        if conn in self.hijacked_conns:
+            return self.handle_connection_shutdown(pkt_ip, conn)
+
         if not pkt_ip.haslayer(HTTPRequest):
             return False
 
@@ -71,18 +98,43 @@ Other requests are unaffected.
                 pkt_ip[HTTPRequest].Path.startswith(ACME_REQ_PATH)):
             return False
 
+        # We will have to mangle this packet in order to drop the local
+        # webserver connection. If we forge a reset with scapy, then
+        # the kernel won't see it, epoll won't work properly, it will continue
+        # to retransmit etc.
+        pkt_rst: IP = pkt_ip.copy()
+        # TODO: we should really drop the payload from this packet, but so far
+        # removing the payload and decrementing the seq isn't working properly.
+        # So here we just add the RST flag and leave everything the same.
+        pkt_rst[TCP].flags = pkt_rst[TCP].flags + "R"
+        del pkt_rst[TCP].chksum
+        pkt_in.payload = bytes(pkt_rst)
+        pkt_in.mangle()
+
+        # Forge the HTTP response (FIN is set to expedite the socket shutdown)
         key_authz = pkt_ip[HTTPRequest].Path[len(
             ACME_REQ_PATH):] + b"." + self.account_thumbprint
-
-        pkt = IP(dst=pkt_ip.src, chksum=None)
-        pkt /= TCP(
-            sport=pkt_ip[TCP].dport, dport=pkt_ip[TCP].sport, seq=pkt_ip[TCP].ack,
-            ack=pkt_ip[TCP].seq + len(pkt_ip[TCP].payload), flags="PA", chksum=None)
+        pkt = IP(dst=conn.saddr, chksum=None)
+        pkt /= TCP(sport=conn.dport, dport=conn.sport, seq=pkt_ip[TCP].ack,
+                   ack=pkt_ip[TCP].seq + len(pkt_ip[TCP].payload), flags="FPA", chksum=None)
         pkt /= HTTP()
-        pkt /= HTTPResponse(
-            Server=b"acme-nfq", Connection=b"close", Content_Length=str(len(key_authz)).encode())
+        pkt /= HTTPResponse(Server=b"certbot-standalone-nfq",
+                            Connection=b"close", Content_Length=str(len(key_authz)).encode())
         pkt /= key_authz
         send(pkt, verbose=False)
+
+        # We will need to forge responses to the ACME server's FIN-ACK
+        self.hijacked_conns.add(conn)
+
+        return None
+
+    def handle_connection_shutdown(self, pkt_ip: IP, conn: TCPConnection) -> bool:
+        if pkt_ip[TCP].flags.F:  # ACK the FIN
+            pkt = IP(dst=conn.saddr, chksum=None)
+            pkt /= TCP(
+                sport=conn.dport, dport=conn.sport, seq=pkt_ip[TCP].ack,
+                ack=pkt_ip[TCP].seq + 1, flags="A", chksum=None)
+            send(pkt, verbose=False)
         return True
 
     def cleanup(self, unused_achalls: Iterable[achallenges.AnnotatedChallenge]) -> None:
