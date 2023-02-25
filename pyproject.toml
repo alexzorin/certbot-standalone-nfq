@@ -1,20 +1,29 @@
-[tool.poetry]
+[project]
 name = "certbot-standalone-nfq"
 version = "0.1.0"
 description = "A more convenient standalone HTTP authenticator based on Linux NFQUEUE"
-authors = ["Alex Zorin <alex@zorin.au>"]
-packages = [{include = "certbot_standalone_nfq"}]
+authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
+requires-python = ">=3.7"
+dependencies = [
+    "certbot>=1.25.0",
+    "acme>=1.25.0",
+    "scapy",
+    "pyroute2",
+    "fnfqueue"
+]
 
-[tool.poetry.dependencies]
-python = ">=3.6"
-fnfqueue = "^1.1.1"
-scapy = "^2.5.0"
-"certbot" = ">=1.12.0"
-"acme" = ">=1.12.0"
+[project.urls]
+repository = "https://github.com/alexzorin/certbot-standalone-nfq"
 
-[tool.poetry.plugins."certbot.plugins"]
-"standalone-nfq" = "certbot_standalone_nfq.auth:Authenticator"
+[project.entry-points."certbot.plugins"]
+standalone-nfq = "certbot_standalone_nfq.auth:Authenticator"
+
+[tool.black]
+line-length = 100
+target-version = ['py37']
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = [
+  "setuptools >= 40.9.0",
+]
+build-backend = "setuptools.build_meta"

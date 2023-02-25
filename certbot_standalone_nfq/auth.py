@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 
-import subprocess
+import socket
 import threading
 from typing import Callable, Iterable, List, NamedTuple, Optional, Set, Type
 
 import fnfqueue
 from acme import challenges
 from certbot import achallenges, configuration, interfaces
+from certbot.errors import PluginError
 from certbot.plugins.common import Plugin
+from pyroute2.netlink.nfnetlink.nftsocket import NFPROTO_INET
+from pyroute2.nftables.expressions import genex
+from pyroute2.nftables.main import NFTables
 from scapy.config import conf as scapy_conf
 from scapy.layers.http import HTTP, HTTPRequest, HTTPResponse
 from scapy.layers.inet import IP, TCP
@@ -15,31 +19,28 @@ from scapy.packet import bind_bottom_up, bind_layers
 from scapy.sendrecv import send
 from scapy.supersocket import L3RawSocket
 
-ACME_REQ_PATH = b"/.well-known/acme-challenge/"
 NFQUEUE_ID = 8555
 
 
-class TCPConnection(NamedTuple):
-    saddr: str
-    daddr: str
-    sport: int
-    dport: int
-
-
 class Authenticator(interfaces.Authenticator, Plugin):
-
     description = """Works like the --standalone plugin, but still works if you already \
 have a web server running on port 80. It does this by temporarily putting all port 80 \
 traffic into an NFQUEUE and stealing ACME challenge validation requests from the queue. \
 Other requests are unaffected.
 """
 
+    class ConnTuple(NamedTuple):
+        saddr: str
+        daddr: str
+        sport: int
+        dport: int
+
     conn: fnfqueue.Connection
     queue: fnfqueue.Queue
     thread: threading.Thread
     account_thumbprint: bytes
     http_port: int
-    hijacked_conns: Set[TCPConnection]
+    hijacked_conns: Set[ConnTuple]
 
     def __init__(self, config: Optional[configuration.NamespaceConfig], name: str) -> None:
         if not config:
@@ -48,10 +49,12 @@ Other requests are unaffected.
         self.hijacked_conns = set()
         super().__init__(config, name)
 
-    def perform(self, achalls: Iterable[achallenges.AnnotatedChallenge]
-                ) -> List[challenges.ChallengeResponse]:
+    def perform(
+        self, achalls: Iterable[achallenges.AnnotatedChallenge]
+    ) -> List[challenges.ChallengeResponse]:
+        achalls
         # Every challenge in the order will have the same account thumbprint, just take the first.
-        key_authz: bytes = achalls[0].response_and_validation()[1].encode()
+        key_authz: bytes = list(achalls)[0].response_and_validation()[1].encode()
         self.account_thumbprint = key_authz.split(b".")[1]
 
         self.conn = fnfqueue.Connection()
@@ -69,7 +72,7 @@ Other requests are unaffected.
         for pkt_in in self.conn:
             result = self.handle_packet(pkt_in)
             if result is None:
-                continue
+                pkt_in.mangle()
             elif result:
                 pkt_in.drop()
             else:
@@ -78,25 +81,50 @@ Other requests are unaffected.
     def handle_packet(self, pkt_in: fnfqueue.Packet) -> Optional[bool]:
         """
         Return values:
-        - True: The packet has been handled, drop it
-        - False: The packet is not handled, pass it through
-        - None: The packet has been modified, pass it through
+        - True: Drop the packet
+        - False: Pass the packet through
+        - None: The packet has been modified, pass the packet through (mangle)
         """
         pkt_ip: IP = IP(pkt_in.payload)
         if not pkt_ip.haslayer(TCP):
             return False
 
-        conn = TCPConnection(pkt_ip.src, pkt_ip.dst,
-                             pkt_ip[TCP].sport, pkt_ip[TCP].dport)
+        conn = Authenticator.ConnTuple(pkt_ip.src, pkt_ip.dst, pkt_ip[TCP].sport, pkt_ip[TCP].dport)
         if conn in self.hijacked_conns:
             return self.handle_connection_shutdown(pkt_ip, conn)
 
         if not pkt_ip.haslayer(HTTPRequest):
             return False
 
-        if not (pkt_ip[HTTPRequest].Method == b'GET' and
-                pkt_ip[HTTPRequest].Path.startswith(ACME_REQ_PATH)):
+        ACME_REQ_PATH = b"/.well-known/acme-challenge/"
+        if not (
+            pkt_ip[HTTPRequest].Method == b"GET"
+            and pkt_ip[HTTPRequest].Path.startswith(ACME_REQ_PATH)
+        ):
             return False
+
+        # Forge the HTTP response (FIN is set to expedite the socket shutdown)
+        key_authz = pkt_ip[HTTPRequest].Path[len(ACME_REQ_PATH) :] + b"." + self.account_thumbprint
+        pkt = IP(dst=conn.saddr, chksum=None)
+        pkt /= TCP(
+            sport=conn.dport,
+            dport=conn.sport,
+            seq=pkt_ip[TCP].ack,
+            ack=pkt_ip[TCP].seq + len(pkt_ip[TCP].payload),
+            flags="FPA",
+            chksum=None,
+        )
+        pkt /= HTTP()
+        pkt /= HTTPResponse(
+            Server=b"certbot-standalone-nfq",
+            Connection=b"close",
+            Content_Length=str(len(key_authz)).encode(),
+        )
+        pkt /= key_authz
+        send(pkt, verbose=False)
+
+        # We will need to forge responses to the ACME server's FIN-ACK
+        self.hijacked_conns.add(conn)
 
         # We will have to mangle this packet in order to drop the local
         # webserver connection. If we forge a reset with scapy, then
@@ -109,31 +137,20 @@ Other requests are unaffected.
         pkt_rst[TCP].flags = pkt_rst[TCP].flags + "R"
         del pkt_rst[TCP].chksum
         pkt_in.payload = bytes(pkt_rst)
-        pkt_in.mangle()
-
-        # Forge the HTTP response (FIN is set to expedite the socket shutdown)
-        key_authz = pkt_ip[HTTPRequest].Path[len(
-            ACME_REQ_PATH):] + b"." + self.account_thumbprint
-        pkt = IP(dst=conn.saddr, chksum=None)
-        pkt /= TCP(sport=conn.dport, dport=conn.sport, seq=pkt_ip[TCP].ack,
-                   ack=pkt_ip[TCP].seq + len(pkt_ip[TCP].payload), flags="FPA", chksum=None)
-        pkt /= HTTP()
-        pkt /= HTTPResponse(Server=b"certbot-standalone-nfq",
-                            Connection=b"close", Content_Length=str(len(key_authz)).encode())
-        pkt /= key_authz
-        send(pkt, verbose=False)
-
-        # We will need to forge responses to the ACME server's FIN-ACK
-        self.hijacked_conns.add(conn)
 
         return None
 
-    def handle_connection_shutdown(self, pkt_ip: IP, conn: TCPConnection) -> bool:
+    def handle_connection_shutdown(self, pkt_ip: IP, conn: ConnTuple) -> bool:
         if pkt_ip[TCP].flags.F:  # ACK the FIN
             pkt = IP(dst=conn.saddr, chksum=None)
             pkt /= TCP(
-                sport=conn.dport, dport=conn.sport, seq=pkt_ip[TCP].ack,
-                ack=pkt_ip[TCP].seq + 1, flags="A", chksum=None)
+                sport=conn.dport,
+                dport=conn.sport,
+                seq=pkt_ip[TCP].ack,
+                ack=pkt_ip[TCP].seq + 1,
+                flags="A",
+                chksum=None,
+            )
             send(pkt, verbose=False)
         return True
 
@@ -152,6 +169,20 @@ Other requests are unaffected.
             bind_bottom_up(TCP, HTTP, dport=self.http_port)
             bind_layers(TCP, HTTP, sport=self.http_port, dport=self.http_port)
 
+        # Try test a binding to self.http_port. If it succeeds, the user is probably
+        # holding the plugin wrong.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", self.http_port))
+                raise PluginError(
+                    "The certbot-standalone-nfq plugin expects a webserver to already "
+                    f"be running on port {self.http_port}, but there is nothing running "
+                    "on that port. Are you sure you don't mean to use the --standalone "
+                    "plugin?"
+                )
+            except OSError as e:
+                pass
+
     def more_info(self) -> str:
         return ""
 
@@ -161,9 +192,68 @@ Other requests are unaffected.
 
 
 def set_nfqueue_enabled(on: bool, port: int):
-    # TODO: we can probably use nftables Python bindings to do this
-    ops = {True: "I", False: "D"}
-    command = f"iptables -{ops[on]} INPUT -p tcp --dport {port} -j NFQUEUE --queue-num {NFQUEUE_ID}"
-    exit_code = subprocess.Popen(command.split(" ")).wait()
-    if exit_code != 0:
-        raise RuntimeError("Adding the iptables rule failed.")
+    with NFTables(nfgen_family=NFPROTO_INET) as nft:
+        nft.begin()
+        if on:
+            # If the table wasn't cleaned up properly last time, do it now
+            try:
+                set_nfqueue_enabled(False, port)
+            except Exception:
+                pass
+            # nft add table inet certbot_standalone_nfq
+            nft.table("add", name="certbot_standalone_nfq")
+            # nft 'add chain inet certbot_standalone_nfq acme_http_requests { type filter hook input priority 1 ; policy accept; }'
+            nft.chain(
+                "add",
+                table="certbot_standalone_nfq",
+                name="acme_http_requests",
+                hook="input",
+                type="filter",
+                policy=1,
+                priority=1,
+            )
+            # nft add rule inet certbot_standalone_nfq acme_http_requests tcp dport 80 queue num 8555 bypass
+            exprs = (
+                # pushes NFT_META_L4PROTO into REG_1
+                (genex("meta", {"KEY": 16, "DREG": 0x01}),),
+                # matches REG_1 (NFT_META_L4PROTO) with 0x06 (TCP)
+                (
+                    genex(
+                        "cmp",
+                        {
+                            "SREG": 1,
+                            "OP": 0,
+                            "DATA": {"attrs": [("NFTA_DATA_VALUE", b"\x06")]},
+                        },
+                    ),
+                ),
+                # pushes the TCP port to REG_1
+                (
+                    genex(
+                        "payload",
+                        {"DREG": 0x01, "BASE": 0x02, "OFFSET": 2, "LEN": 2},
+                    ),
+                ),
+                # compares REG_1 (TCP port) with port 80
+                (
+                    genex(
+                        "cmp",
+                        {
+                            "SREG": 1,
+                            "OP": 0,
+                            "DATA": {"attrs": [("NFTA_DATA_VALUE", b"\x00P")]},
+                        },
+                    ),
+                ),
+                # pushes nfqueue to 8555 with bypass
+                (genex("queue", {"NUM": NFQUEUE_ID, "TOTAL": 1, "FLAGS": 0x01}),),
+            )
+            nft.rule(
+                "add",
+                table="certbot_standalone_nfq",
+                chain="acme_http_requests",
+                expressions=exprs,
+            )
+        else:
+            nft.table("del", name="certbot_standalone_nfq")
+        nft.commit()
