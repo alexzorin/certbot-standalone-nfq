@@ -11,7 +11,6 @@ from acme import challenges
 from certbot import achallenges, configuration, interfaces
 from certbot.errors import PluginError
 from certbot.plugins.common import Plugin
-from pyroute2.netlink.nfnetlink.nftsocket import NFPROTO_INET
 from pyroute2.nftables.expressions import genex
 from pyroute2.nftables.main import NFTables
 from scapy.config import conf as scapy_conf
