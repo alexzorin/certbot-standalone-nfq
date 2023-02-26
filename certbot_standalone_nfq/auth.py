@@ -274,7 +274,7 @@ def set_nfqueue_enabled(on: bool, port: int):
                         {
                             "SREG": 1,
                             "OP": 0,
-                            "DATA": {"attrs": [("NFTA_DATA_VALUE", b"\x00P")]},
+                            "DATA": {"attrs": [("NFTA_DATA_VALUE", port.to_bytes(2, "big"))]},
                         },
                     ),
                 ),
