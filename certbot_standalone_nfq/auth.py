@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import socket
+import subprocess
 import threading
 from time import sleep
 from typing import Callable, Iterable, List, NamedTuple, Optional, Set, Type
@@ -169,12 +170,38 @@ Other requests are unaffected.
         pass
 
     def prepare(self) -> None:
+        self._check_modules()
+        self._check_port_is_bound()
+        self._setup_scapy()
+
+    def _check_modules(self) -> None:
+        required_modules = [
+            "nft_queue",  # The 'queue' expression we use in set_nfqueue_enabled
+            "nfnetlink_queue",  # fnfqueue communicates with nfqueue over netfilter
+        ]
+        for mod in required_modules:
+            proc = subprocess.run(
+                ["modprobe", mod], stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            )
+            if proc.returncode != 0:
+                raise PluginError(
+                    "certbot-standalone-nfq requires support for nfqueue in the Linux kernel. "
+                    f"This is usually available by default, but the {mod} module could not be "
+                    f"loaded on your system: {proc.stdout.decode()}."
+                )
+
+    def _setup_scapy(self) -> None:
+        # Scapy's HTTP layer detection does not seem to work if the HTTP port
+        # is not 80 or 8080, those are hardcoded. It's possible that the user
+        # will be using some alternate port (port forwarding, Pebble, etc)
+        # so we can get the layer detection working on that port too.
         scapy_conf.L3socket = L3RawSocket
         if self.http_port != 80:
             bind_bottom_up(TCP, HTTP, sport=self.http_port)
             bind_bottom_up(TCP, HTTP, dport=self.http_port)
             bind_layers(TCP, HTTP, sport=self.http_port, dport=self.http_port)
 
+    def _check_port_is_bound(self) -> None:
         # Try test a binding to self.http_port. If it succeeds, the user is probably
         # holding the plugin wrong.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
