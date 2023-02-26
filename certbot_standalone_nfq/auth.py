@@ -2,6 +2,7 @@
 
 import socket
 import threading
+from time import sleep
 from typing import Callable, Iterable, List, NamedTuple, Optional, Set, Type
 
 import fnfqueue
@@ -156,6 +157,11 @@ Other requests are unaffected.
 
     def cleanup(self, unused_achalls: Iterable[achallenges.AnnotatedChallenge]) -> None:
         set_nfqueue_enabled(False, self.http_port)
+        # This sleep is a bit of a hack. There is a race between tearing down the queue
+        # rule and closing the netlink connection, because some packets may still be in the
+        # queue after we close the connection. To ensure they are drained, we sleep for a
+        # short time, and then close the connection to netlink.
+        sleep(1.0)
         self.conn.close()
 
     @classmethod
