@@ -225,7 +225,7 @@ Other requests are unaffected.
 
 
 def set_nfqueue_enabled(on: bool, port: int):
-    with NFTables(nfgen_family=NFPROTO_INET) as nft:
+    with NFTables(nfgen_family=1) as nft: # NFPROTO_INET
         nft.begin()
         if on:
             # If the table wasn't cleaned up properly last time, do it now
