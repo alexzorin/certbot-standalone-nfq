@@ -4,3 +4,4 @@ __pycache__
 /dist
 *.egg-info
 .vscode/
+certbot_standalone_nfq/_version.py
