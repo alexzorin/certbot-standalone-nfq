@@ -1,15 +1,26 @@
 [project]
+dynamic = ["version", "dependencies"]
 name = "certbot-standalone-nfq"
 version = "0.1.0"
 description = "Certbot HTTP authenticator that works with any web server."
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
 requires-python = ">=3.7"
+license = { text = "MIT" }
 
 [project.urls]
 repository = "https://github.com/alexzorin/certbot-standalone-nfq"
 
 [project.entry-points."certbot.plugins"]
 standalone-nfq = "certbot_standalone_nfq.auth:Authenticator"
+
+[tool.setuptools]
+packages = ["certbot_standalone_nfq"]
+
+[tool.setuptools.dynamic]
+version = {attr = "certbot_standalone_nfq._version.__version__"}
+
+[tool.setuptools_scm]
+write_to = "certbot_standalone_nfq/_version.py"
 
 [tool.black]
 line-length = 100
@@ -18,5 +29,6 @@ target-version = ['py37']
 [build-system]
 requires = [
   "setuptools >= 40.9.0",
+  "setuptools-scm>=7.0.5"
 ]
 build-backend = "setuptools.build_meta"
