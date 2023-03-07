@@ -1,16 +1,9 @@
 [project]
 name = "certbot-standalone-nfq"
 version = "0.1.0"
-description = "A more convenient standalone HTTP authenticator based on Linux NFQUEUE"
+description = "Certbot HTTP authenticator that works with any web server."
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
 requires-python = ">=3.7"
-dependencies = [
-    "certbot>=1.25.0",
-    "acme>=1.25.0",
-    "scapy",
-    "pyroute2",
-    "fnfqueue"
-]
 
 [project.urls]
 repository = "https://github.com/alexzorin/certbot-standalone-nfq"
