@@ -2,6 +2,7 @@
 dynamic = ["version", "dependencies"]
 name = "certbot-standalone-nfq"
 description = "Certbot HTTP authenticator that works with any web server."
+readme = "README.md"
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
 requires-python = ">=3.7"
 license = { text = "GPL-2.0" }
