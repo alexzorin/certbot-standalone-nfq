@@ -1,0 +1,48 @@
+
+name: certbot-standalone-nfq
+summary: Certbot HTTP authenticator that works with any web server.
+description: Certbot HTTP authenticator that works with any web server.
+website: https://github.com/alexzorin/certbot-standalone-nfq
+license: MIT
+confinement: strict
+grade: stable
+base: core20
+adopt-info: certbot-standalone-nfq
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+  - build-on: armhf
+parts:
+  certbot-standalone-nfq:
+    plugin: python
+    source: .
+    override-pull: |
+        snapcraftctl pull
+        snapcraftctl set-version `git describe --tags`
+    build-environment:
+      - SNAP_BUILD: "True"
+    build-packages:
+      - gcc
+      - git
+      - build-essential
+      - libffi-dev
+      - python3-dev
+  certbot-metadata:
+    plugin: dump
+    source: .
+    stage: [setup.py, certbot-shared]
+    override-pull: |
+        snapcraftctl pull
+        mkdir -p $SNAPCRAFT_PART_SRC/certbot-shared
+slots:
+  certbot:
+    interface: content
+    content: certbot-1
+    read:
+      - $SNAP/lib/python3.8/site-packages
+
+plugs:
+  certbot-metadata:
+    interface: content
+    content: metadata-1
+    target: $SNAP/certbot-shared
