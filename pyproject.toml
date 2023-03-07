@@ -4,7 +4,7 @@ name = "certbot-standalone-nfq"
 description = "Certbot HTTP authenticator that works with any web server."
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
 requires-python = ">=3.7"
-license = { text = "MIT" }
+license = { text = "GPL-2.0" }
 
 [project.urls]
 repository = "https://github.com/alexzorin/certbot-standalone-nfq"
