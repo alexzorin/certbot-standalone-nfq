@@ -1,7 +1,6 @@
 [project]
 dynamic = ["version", "dependencies"]
 name = "certbot-standalone-nfq"
-version = "0.1.0"
 description = "Certbot HTTP authenticator that works with any web server."
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
 requires-python = ">=3.7"
