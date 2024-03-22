@@ -12,5 +12,6 @@ else:
     install_requires.append("packaging")
 
 setup(
+    name="certbot-standalone-nfq",
     install_requires=install_requires,
 )
