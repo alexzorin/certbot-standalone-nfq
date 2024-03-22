@@ -23,6 +23,21 @@ from scapy.supersocket import L3RawSocket
 NFQUEUE_ID = 8555
 
 
+class backwards_compatible_authenticator(object):
+    """Provides support for both Certbot <1.19.0 and >=2.0.0."""
+    def __call__(self, obj):
+        try:
+            import zope.interface
+            from certbot.interfaces import IAuthenticator, IPluginFactory
+            zope.interface.implementer(IAuthenticator)(obj)
+            zope.interface.provider(IPluginFactory)(obj)
+        except ImportError:
+            pass
+        finally:
+            return obj
+
+
+@backwards_compatible_authenticator()
 class Authenticator(interfaces.Authenticator, Plugin):
     description = """Works like the --standalone plugin, but still works if you already \
 have a web server running on port 80. It does this by temporarily putting all port 80 \
