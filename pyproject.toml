@@ -4,7 +4,7 @@ name = "certbot-standalone-nfq"
 description = "Certbot HTTP authenticator that works with any web server."
 readme = "README.md"
 authors = [{name = "Alex Zorin", email = "alex@zorin.au"}]
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = { text = "GPL-2.0" }
 
 [project.urls]
@@ -24,7 +24,7 @@ write_to = "certbot_standalone_nfq/_version.py"
 
 [tool.black]
 line-length = 100
-target-version = ['py37']
+target-version = ['py312']
 
 [build-system]
 requires = [
