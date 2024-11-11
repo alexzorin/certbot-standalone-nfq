@@ -39,7 +39,7 @@ slots:
     interface: content
     content: certbot-1
     read:
-      - $SNAP/lib/python3.8/site-packages
+      - $SNAP/lib/python3.12/site-packages
 
 plugs:
   certbot-metadata:
